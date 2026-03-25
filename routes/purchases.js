@@ -106,6 +106,31 @@ router.post('/', async (req, res) => {
       );
     }
 
+    // Deduct paid amount from account balance
+    if (actualPaid > 0 && payment_type) {
+      let accountName = 'Cash';
+      if (payment_type === 'bank') accountName = 'Bank';
+      else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+
+      const accountResult = await client.query(
+        "SELECT account_id FROM accounts WHERE name = $1 AND currency = 'AFN' LIMIT 1",
+        [accountName]
+      );
+
+      if (accountResult.rows.length > 0) {
+        const account_id = accountResult.rows[0].account_id;
+        await client.query(
+          `INSERT INTO transactions (account_id, amount, type, reference, user_id)
+           VALUES ($1, $2, 'expense', $3, $4)`,
+          [account_id, actualPaid, `Purchase #${purchase.purchase_id}`, req.user.user_id]
+        );
+        await client.query(
+          'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
+          [actualPaid, account_id]
+        );
+      }
+    }
+
     await client.query('COMMIT');
 
     res.status(201).json(purchase);
@@ -120,29 +145,61 @@ router.post('/', async (req, res) => {
 
 // PUT /api/purchases/:id/payment
 router.put('/:id/payment', async (req, res) => {
+  const client = await pool.connect();
   try {
     const { paid_amount, payment_type } = req.body;
 
-    // Get current order
-    const current = await pool.query('SELECT * FROM purchase_orders WHERE purchase_id = $1', [req.params.id]);
+    const current = await client.query('SELECT * FROM purchase_orders WHERE purchase_id = $1', [req.params.id]);
     if (current.rows.length === 0) {
       return res.status(404).json({ error: 'Purchase order not found.' });
     }
 
+    await client.query('BEGIN');
+
     const order = current.rows[0];
+    const prevPaid = parseFloat(order.paid_amount) || 0;
     const newPaid = parseFloat(paid_amount) || 0;
+    const addedAmount = newPaid - prevPaid; // only deduct the new additional payment
     const status = newPaid >= parseFloat(order.total_amount) ? 'paid' : newPaid > 0 ? 'partial' : 'pending';
 
-    const result = await pool.query(
+    const result = await client.query(
       `UPDATE purchase_orders SET paid_amount = $1, payment_type = $2, status = $3
        WHERE purchase_id = $4 RETURNING *`,
       [newPaid, payment_type || order.payment_type, status, req.params.id]
     );
 
+    // Deduct additional payment from account
+    if (addedAmount > 0 && payment_type) {
+      let accountName = 'Cash';
+      if (payment_type === 'bank') accountName = 'Bank';
+      else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+
+      const accountResult = await client.query(
+        "SELECT account_id FROM accounts WHERE name = $1 AND currency = 'AFN' LIMIT 1",
+        [accountName]
+      );
+      if (accountResult.rows.length > 0) {
+        const account_id = accountResult.rows[0].account_id;
+        await client.query(
+          `INSERT INTO transactions (account_id, amount, type, reference, user_id)
+           VALUES ($1, $2, 'expense', $3, $4)`,
+          [account_id, addedAmount, `Purchase #${req.params.id} payment`, req.user.user_id]
+        );
+        await client.query(
+          'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
+          [addedAmount, account_id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Update purchase payment error:', err);
     res.status(500).json({ error: 'Server error.' });
+  } finally {
+    client.release();
   }
 });
 

@@ -99,7 +99,34 @@ router.post('/', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
       [description || null, amount, category || null, payment_type || null, date || new Date(), req.user.user_id]
     );
-    res.status(201).json(result.rows[0]);
+    const expense = result.rows[0];
+
+    // Deduct expense amount from matching account
+    if (payment_type) {
+      let accountName = 'Cash';
+      if (payment_type === 'bank') accountName = 'Bank';
+      else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+
+      const accountResult = await pool.query(
+        "SELECT account_id FROM accounts WHERE name = $1 AND currency = 'AFN' LIMIT 1",
+        [accountName]
+      );
+
+      if (accountResult.rows.length > 0) {
+        const account_id = accountResult.rows[0].account_id;
+        await pool.query(
+          `INSERT INTO transactions (account_id, amount, type, reference, user_id)
+           VALUES ($1, $2, 'expense', $3, $4)`,
+          [account_id, amount, `Expense: ${description || category || 'misc'}`, req.user.user_id]
+        );
+        await pool.query(
+          'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
+          [amount, account_id]
+        );
+      }
+    }
+
+    res.status(201).json(expense);
   } catch (err) {
     console.error('Create expense error:', err);
     res.status(500).json({ error: 'Server error.' });
