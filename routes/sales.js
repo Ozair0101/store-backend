@@ -198,29 +198,57 @@ router.post('/', async (req, res) => {
 
 // PUT /api/sales/:id/payment
 router.put('/:id/payment', async (req, res) => {
+  const client = await pool.connect();
   try {
-    const { paid_amount, payment_type } = req.body;
+    const { paid_amount, payment_type, account_id, sarafi_id } = req.body;
 
-    const current = await pool.query('SELECT * FROM sales_orders WHERE sale_id = $1', [req.params.id]);
+    const current = await client.query('SELECT * FROM sales_orders WHERE sale_id = $1', [req.params.id]);
     if (current.rows.length === 0) {
       return res.status(404).json({ error: 'Sale order not found.' });
     }
 
+    await client.query('BEGIN');
+
     const order = current.rows[0];
-    const finalTotal = parseFloat(order.total_amount) - parseFloat(order.discount_amount);
+    const prevPaid = parseFloat(order.paid_amount) || 0;
     const newPaid = parseFloat(paid_amount) || 0;
+    const addedAmount = newPaid - prevPaid;
+    const finalTotal = parseFloat(order.total_amount) - parseFloat(order.discount_amount);
     const status = newPaid >= finalTotal ? 'completed' : newPaid > 0 ? 'partial' : 'pending';
 
-    const result = await pool.query(
+    const result = await client.query(
       `UPDATE sales_orders SET paid_amount = $1, payment_type = $2, status = $3
        WHERE sale_id = $4 RETURNING *`,
       [newPaid, payment_type || order.payment_type, status, req.params.id]
     );
 
+    // Record financial effect for the additional payment
+    if (addedAmount > 0) {
+      if (sarafi_id) {
+        await client.query(
+          `INSERT INTO sarafi_transactions (sarafi_id, type, amount, account_id, reference, description, user_id)
+           VALUES ($1, 'customer_receipt', $2, NULL, $3, $4, $5)`,
+          [sarafi_id, addedAmount, `Sale #${req.params.id} payment`, 'دریافت بقیه فروش از طریق صرافی', req.user.user_id]
+        );
+        await client.query('UPDATE sarafis SET balance = balance + $1 WHERE sarafi_id = $2', [addedAmount, sarafi_id]);
+      } else if (account_id) {
+        await client.query(
+          `INSERT INTO transactions (account_id, amount, type, reference, user_id)
+           VALUES ($1, $2, 'income', $3, $4)`,
+          [account_id, addedAmount, `Sale #${req.params.id} payment`, req.user.user_id]
+        );
+        await client.query('UPDATE accounts SET balance = balance + $1 WHERE account_id = $2', [addedAmount, account_id]);
+      }
+    }
+
+    await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Update sale payment error:', err);
     res.status(500).json({ error: 'Server error.' });
+  } finally {
+    client.release();
   }
 });
 
