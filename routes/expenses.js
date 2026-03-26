@@ -94,10 +94,17 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Amount is required.' });
     }
 
+    // Resolve currency from account
+    let expenseCurrency = req.body.currency || 'AFN';
+    if (!req.body.currency && account_id) {
+      const accRes = await pool.query('SELECT currency FROM accounts WHERE account_id = $1', [account_id]);
+      if (accRes.rows.length > 0) expenseCurrency = accRes.rows[0].currency;
+    }
+
     const result = await pool.query(
-      `INSERT INTO expenses (description, amount, category, payment_type, date, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [description || null, amount, category || null, payment_type || null, date || new Date(), req.user.user_id]
+      `INSERT INTO expenses (description, amount, category, payment_type, currency, date, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [description || null, amount, category || null, payment_type || null, expenseCurrency, date || new Date(), req.user.user_id]
     );
     const expense = result.rows[0];
 
