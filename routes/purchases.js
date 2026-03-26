@@ -52,6 +52,24 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /api/purchases/:id/payments — payment history
+router.get('/:id/payments', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT p.*, u.full_name AS user_name
+       FROM payments p
+       LEFT JOIN users u ON p.user_id = u.user_id
+       WHERE p.entity_type = 'purchase' AND p.entity_id = $1
+       ORDER BY p.payment_id ASC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Get purchase payments error:', err);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
 // POST /api/purchases
 router.post('/', async (req, res) => {
   const client = await pool.connect();
@@ -115,42 +133,41 @@ router.post('/', async (req, res) => {
 
     // Deduct paid amount from account balance or record sarafi transaction
     if (actualPaid > 0) {
+      let paymentAccountName = null;
       if (sarafi_id) {
-        // Payment via Sarafi — sarafi pays our supplier
         await client.query(
           `INSERT INTO sarafi_transactions (sarafi_id, type, amount, account_id, reference, description, user_id)
            VALUES ($1, 'supplier_payment', $2, NULL, $3, $4, $5)`,
           [sarafi_id, actualPaid, `Purchase #${purchase.purchase_id}`, 'پرداخت خرید از طریق صرافی', req.user.user_id]
         );
-        await client.query(
-          'UPDATE sarafis SET balance = balance - $1 WHERE sarafi_id = $2',
-          [actualPaid, sarafi_id]
-        );
+        await client.query('UPDATE sarafis SET balance = balance - $1 WHERE sarafi_id = $2', [actualPaid, sarafi_id]);
+        const sn = await client.query('SELECT name FROM sarafis WHERE sarafi_id=$1', [sarafi_id]);
+        paymentAccountName = sn.rows[0]?.name || 'صرافی';
       } else {
         let resolvedAccountId = account_id || null;
         if (!resolvedAccountId && payment_type) {
           let accountName = 'Cash';
           if (payment_type === 'bank') accountName = 'Bank';
           else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
-          const accountResult = await client.query(
-            "SELECT account_id FROM accounts WHERE name = $1 LIMIT 1",
-            [accountName]
-          );
+          const accountResult = await client.query("SELECT account_id FROM accounts WHERE name = $1 LIMIT 1", [accountName]);
           if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
         }
-
         if (resolvedAccountId) {
-          await client.query(
-            `INSERT INTO transactions (account_id, amount, type, reference, user_id)
-             VALUES ($1, $2, 'expense', $3, $4)`,
-            [resolvedAccountId, actualPaid, `Purchase #${purchase.purchase_id}`, req.user.user_id]
-          );
-          await client.query(
-            'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
-            [actualPaid, resolvedAccountId]
-          );
+          await client.query(`INSERT INTO transactions (account_id, amount, type, reference, user_id) VALUES ($1, $2, 'expense', $3, $4)`,
+            [resolvedAccountId, actualPaid, `Purchase #${purchase.purchase_id}`, req.user.user_id]);
+          await client.query('UPDATE accounts SET balance = balance - $1 WHERE account_id = $2', [actualPaid, resolvedAccountId]);
+          const an = await client.query('SELECT name FROM accounts WHERE account_id=$1', [resolvedAccountId]);
+          paymentAccountName = an.rows[0]?.name || 'حساب';
         }
       }
+
+      // Record in payments history
+      await client.query(
+        `INSERT INTO payments (entity_type, entity_id, amount, currency, method, account_id, sarafi_id, account_name, note, user_id)
+         VALUES ('purchase', $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [purchase.purchase_id, actualPaid, purchaseCurrency, sarafi_id ? 'sarafi' : 'account',
+         account_id || null, sarafi_id || null, paymentAccountName, 'پرداخت اولیه', req.user.user_id]
+      );
     }
 
     await client.query('COMMIT');
@@ -198,42 +215,41 @@ router.put('/:id/payment', async (req, res) => {
     );
 
     // Deduct additional payment from account or sarafi
-    if (addedAmount > 0) {
-      if (sarafi_id) {
-        await client.query(
-          `INSERT INTO sarafi_transactions (sarafi_id, type, amount, account_id, reference, description, user_id)
-           VALUES ($1, 'supplier_payment', $2, NULL, $3, $4, $5)`,
-          [sarafi_id, addedAmount, `Purchase #${req.params.id} payment`, 'پرداخت خرید از طریق صرافی', req.user.user_id]
-        );
-        await client.query(
-          'UPDATE sarafis SET balance = balance - $1 WHERE sarafi_id = $2',
-          [addedAmount, sarafi_id]
-        );
-      } else {
-        let resolvedAccountId = account_id || null;
-        if (!resolvedAccountId && payment_type) {
-          let accountName = 'Cash';
-          if (payment_type === 'bank') accountName = 'Bank';
-          else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
-          const accountResult = await client.query(
-            "SELECT account_id FROM accounts WHERE name = $1 LIMIT 1",
-            [accountName]
-          );
-          if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
-        }
-        if (resolvedAccountId) {
-          await client.query(
-            `INSERT INTO transactions (account_id, amount, type, reference, user_id)
-             VALUES ($1, $2, 'expense', $3, $4)`,
-            [resolvedAccountId, addedAmount, `Purchase #${req.params.id} payment`, req.user.user_id]
-          );
-          await client.query(
-            'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
-            [addedAmount, resolvedAccountId]
-          );
-        }
+    let paymentAccountName = null;
+    if (sarafi_id) {
+      await client.query(
+        `INSERT INTO sarafi_transactions (sarafi_id, type, amount, account_id, reference, description, user_id)
+         VALUES ($1, 'supplier_payment', $2, NULL, $3, $4, $5)`,
+        [sarafi_id, addedAmount, `Purchase #${req.params.id} payment`, 'پرداخت خرید از طریق صرافی', req.user.user_id]
+      );
+      await client.query('UPDATE sarafis SET balance = balance - $1 WHERE sarafi_id = $2', [addedAmount, sarafi_id]);
+      const sn = await client.query('SELECT name FROM sarafis WHERE sarafi_id=$1', [sarafi_id]);
+      paymentAccountName = sn.rows[0]?.name || 'صرافی';
+    } else {
+      let resolvedAccountId = account_id || null;
+      if (!resolvedAccountId && payment_type) {
+        let accountName = 'Cash';
+        if (payment_type === 'bank') accountName = 'Bank';
+        else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+        const accountResult = await client.query("SELECT account_id FROM accounts WHERE name = $1 LIMIT 1", [accountName]);
+        if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
+      }
+      if (resolvedAccountId) {
+        await client.query(`INSERT INTO transactions (account_id, amount, type, reference, user_id) VALUES ($1, $2, 'expense', $3, $4)`,
+          [resolvedAccountId, addedAmount, `Purchase #${req.params.id} payment`, req.user.user_id]);
+        await client.query('UPDATE accounts SET balance = balance - $1 WHERE account_id = $2', [addedAmount, resolvedAccountId]);
+        const an = await client.query('SELECT name FROM accounts WHERE account_id=$1', [resolvedAccountId]);
+        paymentAccountName = an.rows[0]?.name || 'حساب';
       }
     }
+
+    // Record in payments history
+    await client.query(
+      `INSERT INTO payments (entity_type, entity_id, amount, currency, method, account_id, sarafi_id, account_name, note, user_id)
+       VALUES ('purchase', $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [req.params.id, addedAmount, order.currency || 'AFN', sarafi_id ? 'sarafi' : 'account',
+       account_id || null, sarafi_id || null, paymentAccountName, 'پرداخت بقیه', req.user.user_id]
+    );
 
     await client.query('COMMIT');
     res.json(result.rows[0]);
