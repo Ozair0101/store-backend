@@ -28,7 +28,7 @@ router.get('/sales-summary', async (req, res) => {
          COALESCE(SUM(so.total_amount), 0) AS total_sales,
          COALESCE(SUM(so.discount_amount), 0) AS total_discounts,
          COALESCE(SUM(so.paid_amount), 0) AS total_received,
-         COALESCE(SUM(so.total_amount - so.paid_amount), 0) AS total_outstanding
+         COALESCE(SUM(so.total_amount - so.discount_amount - so.paid_amount), 0) AS total_outstanding
        FROM sales_orders so ${where}`,
       params
     );
