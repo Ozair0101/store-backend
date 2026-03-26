@@ -173,9 +173,16 @@ router.put('/:id/payment', async (req, res) => {
 
     const order = current.rows[0];
     const prevPaid = parseFloat(order.paid_amount) || 0;
-    const newPaid = parseFloat(paid_amount) || 0;
-    const addedAmount = newPaid - prevPaid; // only deduct the new additional payment
-    const status = newPaid >= parseFloat(order.total_amount) ? 'paid' : newPaid > 0 ? 'partial' : 'pending';
+    const totalAmount = parseFloat(order.total_amount);
+    // Cap payment to the total — never accept more than what's owed
+    const newPaid = Math.min(parseFloat(paid_amount) || 0, totalAmount);
+    const addedAmount = newPaid - prevPaid;
+    const status = newPaid >= totalAmount ? 'paid' : newPaid > 0 ? 'partial' : 'pending';
+
+    if (addedAmount <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'مبلغ پرداخت باید بیشتر از مبلغ قبلی باشد.' });
+    }
 
     const result = await client.query(
       `UPDATE purchase_orders SET paid_amount = $1, payment_type = $2, status = $3
