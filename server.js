@@ -22,6 +22,7 @@ app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/accounts', require('./routes/accounts'));
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/sarafis', require('./routes/sarafis'));
+app.use('/api/debts', require('./routes/debts'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 
