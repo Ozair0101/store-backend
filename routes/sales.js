@@ -77,13 +77,20 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { customer_id, invoice_number, discount_amount, payment_type, paid_amount, account_id, sarafi_id, items } = req.body;
+    const { customer_id, invoice_number, discount_amount, payment_type, paid_amount, account_id, sarafi_id, currency, items } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ error: 'At least one item is required.' });
     }
 
     await client.query('BEGIN');
+
+    // Resolve currency from account if not explicitly provided
+    let saleCurrency = currency || 'AFN';
+    if (!currency && account_id) {
+      const accRes = await client.query('SELECT currency FROM accounts WHERE account_id = $1', [account_id]);
+      if (accRes.rows.length > 0) saleCurrency = accRes.rows[0].currency;
+    }
 
     // Calculate total
     let total_amount = 0;
@@ -98,9 +105,9 @@ router.post('/', async (req, res) => {
 
     // Create sale order
     const orderResult = await client.query(
-      `INSERT INTO sales_orders (customer_id, invoice_number, total_amount, discount_amount, paid_amount, payment_type, status, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [customer_id || null, invoice_number || null, total_amount, actualDiscount, actualPaid, payment_type || 'cash', status, req.user.user_id]
+      `INSERT INTO sales_orders (customer_id, invoice_number, total_amount, discount_amount, paid_amount, payment_type, status, currency, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [customer_id || null, invoice_number || null, total_amount, actualDiscount, actualPaid, payment_type || 'cash', status, saleCurrency, req.user.user_id]
     );
     const sale = orderResult.rows[0];
 

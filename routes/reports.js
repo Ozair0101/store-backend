@@ -4,6 +4,12 @@ const { auth } = require('../middleware/auth');
 
 router.use(auth);
 
+/*
+  IMPORTANT: All monetary sums use exchange rates to convert to AFN (base currency).
+  Formula: amount * COALESCE(er.rate_to_afn, 1)
+  This ensures 100 USD * 71 = 7100 AFN in reports.
+*/
+
 // GET /api/reports/sales-summary
 router.get('/sales-summary', async (req, res) => {
   try {
@@ -11,25 +17,21 @@ router.get('/sales-summary', async (req, res) => {
     const params = [];
     const conditions = [];
 
-    if (from) {
-      params.push(from);
-      conditions.push(`so.date >= $${params.length}`);
-    }
-    if (to) {
-      params.push(to);
-      conditions.push(`so.date <= $${params.length}`);
-    }
+    if (from) { params.push(from); conditions.push(`so.date >= $${params.length}`); }
+    if (to)   { params.push(to);   conditions.push(`so.date <= $${params.length}`); }
 
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const result = await pool.query(
       `SELECT
          COUNT(*) AS total_orders,
-         COALESCE(SUM(so.total_amount), 0) AS total_sales,
-         COALESCE(SUM(so.discount_amount), 0) AS total_discounts,
-         COALESCE(SUM(so.paid_amount), 0) AS total_received,
-         COALESCE(SUM(so.total_amount - so.discount_amount - so.paid_amount), 0) AS total_outstanding
-       FROM sales_orders so ${where}`,
+         COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_sales,
+         COALESCE(SUM(so.discount_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_discounts,
+         COALESCE(SUM(so.paid_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_received,
+         COALESCE(SUM((so.total_amount - so.discount_amount - so.paid_amount) * COALESCE(er.rate_to_afn, 1)), 0) AS total_outstanding
+       FROM sales_orders so
+       LEFT JOIN exchange_rates er ON so.currency = er.currency
+       ${where}`,
       params
     );
 
@@ -38,9 +40,11 @@ router.get('/sales-summary', async (req, res) => {
       `SELECT
          so.date::date AS day,
          COUNT(*) AS orders,
-         COALESCE(SUM(so.total_amount), 0) AS sales,
-         COALESCE(SUM(so.paid_amount), 0) AS received
-       FROM sales_orders so ${where}
+         COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS sales,
+         COALESCE(SUM(so.paid_amount * COALESCE(er.rate_to_afn, 1)), 0) AS received
+       FROM sales_orders so
+       LEFT JOIN exchange_rates er ON so.currency = er.currency
+       ${where}
        GROUP BY so.date::date
        ORDER BY day DESC`,
       params
@@ -63,24 +67,20 @@ router.get('/purchase-summary', async (req, res) => {
     const params = [];
     const conditions = [];
 
-    if (from) {
-      params.push(from);
-      conditions.push(`po.created_at >= $${params.length}`);
-    }
-    if (to) {
-      params.push(to);
-      conditions.push(`po.created_at <= $${params.length}`);
-    }
+    if (from) { params.push(from); conditions.push(`po.created_at >= $${params.length}`); }
+    if (to)   { params.push(to);   conditions.push(`po.created_at <= $${params.length}`); }
 
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const result = await pool.query(
       `SELECT
          COUNT(*) AS total_orders,
-         COALESCE(SUM(po.total_amount), 0) AS total_purchases,
-         COALESCE(SUM(po.paid_amount), 0) AS total_paid,
-         COALESCE(SUM(po.total_amount - po.paid_amount), 0) AS total_outstanding
-       FROM purchase_orders po ${where}`,
+         COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_purchases,
+         COALESCE(SUM(po.paid_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_paid,
+         COALESCE(SUM((po.total_amount - po.paid_amount) * COALESCE(er.rate_to_afn, 1)), 0) AS total_outstanding
+       FROM purchase_orders po
+       LEFT JOIN exchange_rates er ON po.currency = er.currency
+       ${where}`,
       params
     );
 
@@ -89,10 +89,11 @@ router.get('/purchase-summary', async (req, res) => {
       `SELECT
          s.name AS supplier_name,
          COUNT(*) AS orders,
-         COALESCE(SUM(po.total_amount), 0) AS total_amount,
-         COALESCE(SUM(po.paid_amount), 0) AS paid_amount
+         COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_amount,
+         COALESCE(SUM(po.paid_amount * COALESCE(er.rate_to_afn, 1)), 0) AS paid_amount
        FROM purchase_orders po
        LEFT JOIN suppliers s ON po.supplier_id = s.supplier_id
+       LEFT JOIN exchange_rates er ON po.currency = er.currency
        ${where}
        GROUP BY s.name
        ORDER BY total_amount DESC`,
@@ -116,22 +117,18 @@ router.get('/expense-summary', async (req, res) => {
     const params = [];
     const conditions = [];
 
-    if (from) {
-      params.push(from);
-      conditions.push(`e.date >= $${params.length}`);
-    }
-    if (to) {
-      params.push(to);
-      conditions.push(`e.date <= $${params.length}`);
-    }
+    if (from) { params.push(from); conditions.push(`e.date >= $${params.length}`); }
+    if (to)   { params.push(to);   conditions.push(`e.date <= $${params.length}`); }
 
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const result = await pool.query(
       `SELECT
          COUNT(*) AS total_expenses,
-         COALESCE(SUM(e.amount), 0) AS total_amount
-       FROM expenses e ${where}`,
+         COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_amount
+       FROM expenses e
+       LEFT JOIN exchange_rates er ON e.currency = er.currency
+       ${where}`,
       params
     );
 
@@ -139,8 +136,10 @@ router.get('/expense-summary', async (req, res) => {
       `SELECT
          e.category,
          COUNT(*) AS count,
-         COALESCE(SUM(e.amount), 0) AS total_amount
-       FROM expenses e ${where}
+         COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_amount
+       FROM expenses e
+       LEFT JOIN exchange_rates er ON e.currency = er.currency
+       ${where}
        GROUP BY e.category
        ORDER BY total_amount DESC`,
       params
@@ -185,21 +184,28 @@ router.get('/profit-loss', async (req, res) => {
     const expensesWhere = conditions_expenses.length > 0 ? 'WHERE ' + conditions_expenses.join(' AND ') : '';
 
     const salesResult = await pool.query(
-      `SELECT COALESCE(SUM(total_amount), 0) AS total_sales,
-              COALESCE(SUM(discount_amount), 0) AS total_discounts
-       FROM sales_orders ${salesWhere}`,
+      `SELECT
+         COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_sales,
+         COALESCE(SUM(so.discount_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_discounts
+       FROM sales_orders so
+       LEFT JOIN exchange_rates er ON so.currency = er.currency
+       ${salesWhere}`,
       params
     );
 
     const purchasesResult = await pool.query(
-      `SELECT COALESCE(SUM(total_amount), 0) AS total_purchases
-       FROM purchase_orders ${purchasesWhere}`,
+      `SELECT COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_purchases
+       FROM purchase_orders po
+       LEFT JOIN exchange_rates er ON po.currency = er.currency
+       ${purchasesWhere}`,
       params
     );
 
     const expensesResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total_expenses
-       FROM expenses ${expensesWhere}`,
+      `SELECT COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_expenses
+       FROM expenses e
+       LEFT JOIN exchange_rates er ON e.currency = er.currency
+       ${expensesWhere}`,
       params
     );
 
@@ -235,9 +241,11 @@ router.get('/top-products', async (req, res) => {
       `SELECT
          p.product_id, p.name, p.barcode,
          COALESCE(SUM(soi.quantity), 0) AS total_sold,
-         COALESCE(SUM(soi.total_price), 0) AS total_revenue
+         COALESCE(SUM(soi.total_price * COALESCE(er.rate_to_afn, 1)), 0) AS total_revenue
        FROM sales_order_items soi
        JOIN products p ON soi.product_id = p.product_id
+       JOIN sales_orders so ON soi.sale_id = so.sale_id
+       LEFT JOIN exchange_rates er ON so.currency = er.currency
        GROUP BY p.product_id, p.name, p.barcode
        ORDER BY total_sold DESC
        LIMIT $1`,
