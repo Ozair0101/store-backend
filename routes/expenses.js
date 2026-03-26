@@ -101,29 +101,42 @@ router.post('/', async (req, res) => {
     );
     const expense = result.rows[0];
 
-    // Deduct expense amount from account
-    let resolvedAccountId = account_id || null;
-    if (!resolvedAccountId && payment_type) {
-      let accountName = 'Cash';
-      if (payment_type === 'bank') accountName = 'Bank';
-      else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
-      const accountResult = await pool.query(
-        "SELECT account_id FROM accounts WHERE name = $1 LIMIT 1",
-        [accountName]
+    // Deduct expense amount from account or sarafi
+    const sarafi_id = req.body.sarafi_id;
+    if (sarafi_id) {
+      await pool.query(
+        `INSERT INTO sarafi_transactions (sarafi_id, type, amount, account_id, reference, description, user_id)
+         VALUES ($1, 'supplier_payment', $2, NULL, $3, $4, $5)`,
+        [sarafi_id, amount, `Expense #${expense.expense_id}`, `مصرف: ${description || category || 'misc'}`, req.user.user_id]
       );
-      if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
-    }
+      await pool.query(
+        'UPDATE sarafis SET balance = balance - $1 WHERE sarafi_id = $2',
+        [amount, sarafi_id]
+      );
+    } else {
+      let resolvedAccountId = account_id || null;
+      if (!resolvedAccountId && payment_type) {
+        let accountName = 'Cash';
+        if (payment_type === 'bank') accountName = 'Bank';
+        else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+        const accountResult = await pool.query(
+          "SELECT account_id FROM accounts WHERE name = $1 LIMIT 1",
+          [accountName]
+        );
+        if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
+      }
 
-    if (resolvedAccountId) {
-      await pool.query(
-        `INSERT INTO transactions (account_id, amount, type, reference, user_id)
-         VALUES ($1, $2, 'expense', $3, $4)`,
-        [resolvedAccountId, amount, `Expense: ${description || category || 'misc'}`, req.user.user_id]
-      );
-      await pool.query(
-        'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
-        [amount, resolvedAccountId]
-      );
+      if (resolvedAccountId) {
+        await pool.query(
+          `INSERT INTO transactions (account_id, amount, type, reference, user_id)
+           VALUES ($1, $2, 'expense', $3, $4)`,
+          [resolvedAccountId, amount, `Expense: ${description || category || 'misc'}`, req.user.user_id]
+        );
+        await pool.query(
+          'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
+          [amount, resolvedAccountId]
+        );
+      }
     }
 
     res.status(201).json(expense);
