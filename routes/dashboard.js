@@ -10,10 +10,13 @@ router.get('/stats', async (req, res) => {
     // Total products
     const productsResult = await pool.query('SELECT COUNT(*) AS count FROM products');
 
-    // Today's sales
+    // Today's sales (converted to AFN)
     const salesResult = await pool.query(
-      `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS total
-       FROM sales_orders WHERE date::date = CURRENT_DATE`
+      `SELECT COUNT(*) AS count,
+              COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total
+       FROM sales_orders so
+       LEFT JOIN exchange_rates er ON so.currency = er.currency
+       WHERE so.date::date = CURRENT_DATE`
     );
 
     // Total customers
@@ -24,12 +27,13 @@ router.get('/stats', async (req, res) => {
       'SELECT COUNT(*) AS count FROM products WHERE stock_quantity < 10'
     );
 
-    // Total expenses this month
+    // Total expenses this month (converted to AFN)
     const expensesResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total
-       FROM expenses
-       WHERE date >= date_trunc('month', CURRENT_DATE)
-         AND date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'`
+      `SELECT COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0) AS total
+       FROM expenses e
+       LEFT JOIN exchange_rates er ON e.currency = er.currency
+       WHERE e.date >= date_trunc('month', CURRENT_DATE)
+         AND e.date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'`
     );
 
     // Account balances
