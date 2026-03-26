@@ -25,10 +25,10 @@ router.get('/sales-summary', async (req, res) => {
     const result = await pool.query(
       `SELECT
          COUNT(*) AS total_orders,
-         COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_sales,
-         COALESCE(SUM(so.discount_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_discounts,
-         COALESCE(SUM(so.paid_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_received,
-         COALESCE(SUM((so.total_amount - so.discount_amount - so.paid_amount) * COALESCE(er.rate_to_afn, 1)), 0) AS total_outstanding
+         ROUND(COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_sales,
+         ROUND(COALESCE(SUM(so.discount_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_discounts,
+         ROUND(COALESCE(SUM(so.paid_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_received,
+         ROUND(COALESCE(SUM((so.total_amount - so.discount_amount - so.paid_amount) * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_outstanding
        FROM sales_orders so
        LEFT JOIN exchange_rates er ON so.currency = er.currency
        ${where}`,
@@ -40,8 +40,8 @@ router.get('/sales-summary', async (req, res) => {
       `SELECT
          so.date::date AS day,
          COUNT(*) AS orders,
-         COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS sales,
-         COALESCE(SUM(so.paid_amount * COALESCE(er.rate_to_afn, 1)), 0) AS received
+         ROUND(COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS sales,
+         ROUND(COALESCE(SUM(so.paid_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS received
        FROM sales_orders so
        LEFT JOIN exchange_rates er ON so.currency = er.currency
        ${where}
@@ -75,9 +75,9 @@ router.get('/purchase-summary', async (req, res) => {
     const result = await pool.query(
       `SELECT
          COUNT(*) AS total_orders,
-         COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_purchases,
-         COALESCE(SUM(po.paid_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_paid,
-         COALESCE(SUM((po.total_amount - po.paid_amount) * COALESCE(er.rate_to_afn, 1)), 0) AS total_outstanding
+         ROUND(COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_purchases,
+         ROUND(COALESCE(SUM(po.paid_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_paid,
+         ROUND(COALESCE(SUM((po.total_amount - po.paid_amount) * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_outstanding
        FROM purchase_orders po
        LEFT JOIN exchange_rates er ON po.currency = er.currency
        ${where}`,
@@ -89,8 +89,8 @@ router.get('/purchase-summary', async (req, res) => {
       `SELECT
          s.name AS supplier_name,
          COUNT(*) AS orders,
-         COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_amount,
-         COALESCE(SUM(po.paid_amount * COALESCE(er.rate_to_afn, 1)), 0) AS paid_amount
+         ROUND(COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_amount,
+         ROUND(COALESCE(SUM(po.paid_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS paid_amount
        FROM purchase_orders po
        LEFT JOIN suppliers s ON po.supplier_id = s.supplier_id
        LEFT JOIN exchange_rates er ON po.currency = er.currency
@@ -125,7 +125,7 @@ router.get('/expense-summary', async (req, res) => {
     const result = await pool.query(
       `SELECT
          COUNT(*) AS total_expenses,
-         COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_amount
+         ROUND(COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_amount
        FROM expenses e
        LEFT JOIN exchange_rates er ON e.currency = er.currency
        ${where}`,
@@ -136,7 +136,7 @@ router.get('/expense-summary', async (req, res) => {
       `SELECT
          e.category,
          COUNT(*) AS count,
-         COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_amount
+         ROUND(COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_amount
        FROM expenses e
        LEFT JOIN exchange_rates er ON e.currency = er.currency
        ${where}
@@ -185,8 +185,8 @@ router.get('/profit-loss', async (req, res) => {
 
     const salesResult = await pool.query(
       `SELECT
-         COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_sales,
-         COALESCE(SUM(so.discount_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_discounts
+         ROUND(COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_sales,
+         ROUND(COALESCE(SUM(so.discount_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_discounts
        FROM sales_orders so
        LEFT JOIN exchange_rates er ON so.currency = er.currency
        ${salesWhere}`,
@@ -194,7 +194,7 @@ router.get('/profit-loss', async (req, res) => {
     );
 
     const purchasesResult = await pool.query(
-      `SELECT COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_purchases
+      `SELECT ROUND(COALESCE(SUM(po.total_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_purchases
        FROM purchase_orders po
        LEFT JOIN exchange_rates er ON po.currency = er.currency
        ${purchasesWhere}`,
@@ -202,28 +202,29 @@ router.get('/profit-loss', async (req, res) => {
     );
 
     const expensesResult = await pool.query(
-      `SELECT COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0) AS total_expenses
+      `SELECT ROUND(COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_expenses
        FROM expenses e
        LEFT JOIN exchange_rates er ON e.currency = er.currency
        ${expensesWhere}`,
       params
     );
 
+    const r2 = (n) => Math.round(n * 100) / 100;
     const totalSales = parseFloat(salesResult.rows[0].total_sales);
     const totalDiscounts = parseFloat(salesResult.rows[0].total_discounts);
     const totalPurchases = parseFloat(purchasesResult.rows[0].total_purchases);
     const totalExpenses = parseFloat(expensesResult.rows[0].total_expenses);
-    const netSales = totalSales - totalDiscounts;
-    const grossProfit = netSales - totalPurchases;
-    const netProfit = grossProfit - totalExpenses;
+    const netSales = r2(totalSales - totalDiscounts);
+    const grossProfit = r2(netSales - totalPurchases);
+    const netProfit = r2(grossProfit - totalExpenses);
 
     res.json({
-      total_sales: totalSales,
-      total_discounts: totalDiscounts,
+      total_sales: r2(totalSales),
+      total_discounts: r2(totalDiscounts),
       net_sales: netSales,
-      total_purchases: totalPurchases,
+      total_purchases: r2(totalPurchases),
       gross_profit: grossProfit,
-      total_expenses: totalExpenses,
+      total_expenses: r2(totalExpenses),
       net_profit: netProfit,
     });
   } catch (err) {
@@ -241,7 +242,7 @@ router.get('/top-products', async (req, res) => {
       `SELECT
          p.product_id, p.name, p.barcode,
          COALESCE(SUM(soi.quantity), 0) AS total_sold,
-         COALESCE(SUM(soi.total_price * COALESCE(er.rate_to_afn, 1)), 0) AS total_revenue
+         ROUND(COALESCE(SUM(soi.total_price * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total_revenue
        FROM sales_order_items soi
        JOIN products p ON soi.product_id = p.product_id
        JOIN sales_orders so ON soi.sale_id = so.sale_id

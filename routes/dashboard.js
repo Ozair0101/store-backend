@@ -13,7 +13,7 @@ router.get('/stats', async (req, res) => {
     // Today's sales (converted to AFN)
     const salesResult = await pool.query(
       `SELECT COUNT(*) AS count,
-              COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0) AS total
+              ROUND(COALESCE(SUM(so.total_amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total
        FROM sales_orders so
        LEFT JOIN exchange_rates er ON so.currency = er.currency
        WHERE so.date::date = CURRENT_DATE`
@@ -29,7 +29,7 @@ router.get('/stats', async (req, res) => {
 
     // Total expenses this month (converted to AFN)
     const expensesResult = await pool.query(
-      `SELECT COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0) AS total
+      `SELECT ROUND(COALESCE(SUM(e.amount * COALESCE(er.rate_to_afn, 1)), 0), 2) AS total
        FROM expenses e
        LEFT JOIN exchange_rates er ON e.currency = er.currency
        WHERE e.date >= date_trunc('month', CURRENT_DATE)
