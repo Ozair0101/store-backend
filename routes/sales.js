@@ -77,7 +77,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { customer_id, invoice_number, discount_amount, payment_type, paid_amount, items } = req.body;
+    const { customer_id, invoice_number, discount_amount, payment_type, paid_amount, account_id, items } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ error: 'At least one item is required.' });
@@ -142,18 +142,21 @@ router.post('/', async (req, res) => {
 
     // Create transaction record for the payment
     if (actualPaid > 0) {
-      // Find account based on payment type
-      let accountName = 'Cash';
-      if (payment_type === 'bank') accountName = 'Bank';
-      else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+      // Use provided account_id directly, or fall back to name-based lookup
+      let resolvedAccountId = account_id || null;
+      if (!resolvedAccountId) {
+        let accountName = 'Cash';
+        if (payment_type === 'bank') accountName = 'Bank';
+        else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+        const accountResult = await client.query(
+          "SELECT account_id FROM accounts WHERE name = $1 LIMIT 1",
+          [accountName]
+        );
+        if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
+      }
 
-      const accountResult = await client.query(
-        "SELECT account_id FROM accounts WHERE name = $1 AND currency = 'AFN' LIMIT 1",
-        [accountName]
-      );
-
-      if (accountResult.rows.length > 0) {
-        const account_id = accountResult.rows[0].account_id;
+      if (resolvedAccountId) {
+        const account_id = resolvedAccountId;
 
         await client.query(
           `INSERT INTO transactions (account_id, amount, type, reference, user_id)

@@ -56,7 +56,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { supplier_id, invoice_number, payment_type, paid_amount, due_date, items } = req.body;
+    const { supplier_id, invoice_number, payment_type, paid_amount, account_id, due_date, items } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ error: 'At least one item is required.' });
@@ -107,18 +107,21 @@ router.post('/', async (req, res) => {
     }
 
     // Deduct paid amount from account balance
-    if (actualPaid > 0 && payment_type) {
-      let accountName = 'Cash';
-      if (payment_type === 'bank') accountName = 'Bank';
-      else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+    if (actualPaid > 0) {
+      let resolvedAccountId = account_id || null;
+      if (!resolvedAccountId && payment_type) {
+        let accountName = 'Cash';
+        if (payment_type === 'bank') accountName = 'Bank';
+        else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+        const accountResult = await client.query(
+          "SELECT account_id FROM accounts WHERE name = $1 LIMIT 1",
+          [accountName]
+        );
+        if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
+      }
 
-      const accountResult = await client.query(
-        "SELECT account_id FROM accounts WHERE name = $1 AND currency = 'AFN' LIMIT 1",
-        [accountName]
-      );
-
-      if (accountResult.rows.length > 0) {
-        const account_id = accountResult.rows[0].account_id;
+      if (resolvedAccountId) {
+        const account_id = resolvedAccountId;
         await client.query(
           `INSERT INTO transactions (account_id, amount, type, reference, user_id)
            VALUES ($1, $2, 'expense', $3, $4)`,
@@ -147,7 +150,7 @@ router.post('/', async (req, res) => {
 router.put('/:id/payment', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { paid_amount, payment_type } = req.body;
+    const { paid_amount, payment_type, account_id } = req.body;
 
     const current = await client.query('SELECT * FROM purchase_orders WHERE purchase_id = $1', [req.params.id]);
     if (current.rows.length === 0) {
@@ -169,17 +172,20 @@ router.put('/:id/payment', async (req, res) => {
     );
 
     // Deduct additional payment from account
-    if (addedAmount > 0 && payment_type) {
-      let accountName = 'Cash';
-      if (payment_type === 'bank') accountName = 'Bank';
-      else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
-
-      const accountResult = await client.query(
-        "SELECT account_id FROM accounts WHERE name = $1 AND currency = 'AFN' LIMIT 1",
-        [accountName]
-      );
-      if (accountResult.rows.length > 0) {
-        const account_id = accountResult.rows[0].account_id;
+    if (addedAmount > 0) {
+      let resolvedAccountId = account_id || null;
+      if (!resolvedAccountId && payment_type) {
+        let accountName = 'Cash';
+        if (payment_type === 'bank') accountName = 'Bank';
+        else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
+        const accountResult = await client.query(
+          "SELECT account_id FROM accounts WHERE name = $1 LIMIT 1",
+          [accountName]
+        );
+        if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
+      }
+      if (resolvedAccountId) {
+        const account_id = resolvedAccountId;
         await client.query(
           `INSERT INTO transactions (account_id, amount, type, reference, user_id)
            VALUES ($1, $2, 'expense', $3, $4)`,

@@ -89,7 +89,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/expenses
 router.post('/', async (req, res) => {
   try {
-    const { description, amount, category, payment_type, date } = req.body;
+    const { description, amount, category, payment_type, account_id, date } = req.body;
     if (!amount) {
       return res.status(400).json({ error: 'Amount is required.' });
     }
@@ -101,29 +101,29 @@ router.post('/', async (req, res) => {
     );
     const expense = result.rows[0];
 
-    // Deduct expense amount from matching account
-    if (payment_type) {
+    // Deduct expense amount from account
+    let resolvedAccountId = account_id || null;
+    if (!resolvedAccountId && payment_type) {
       let accountName = 'Cash';
       if (payment_type === 'bank') accountName = 'Bank';
       else if (payment_type === 'mobile') accountName = 'Mobile Wallet';
-
       const accountResult = await pool.query(
-        "SELECT account_id FROM accounts WHERE name = $1 AND currency = 'AFN' LIMIT 1",
+        "SELECT account_id FROM accounts WHERE name = $1 LIMIT 1",
         [accountName]
       );
+      if (accountResult.rows.length > 0) resolvedAccountId = accountResult.rows[0].account_id;
+    }
 
-      if (accountResult.rows.length > 0) {
-        const account_id = accountResult.rows[0].account_id;
-        await pool.query(
-          `INSERT INTO transactions (account_id, amount, type, reference, user_id)
-           VALUES ($1, $2, 'expense', $3, $4)`,
-          [account_id, amount, `Expense: ${description || category || 'misc'}`, req.user.user_id]
-        );
-        await pool.query(
-          'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
-          [amount, account_id]
-        );
-      }
+    if (resolvedAccountId) {
+      await pool.query(
+        `INSERT INTO transactions (account_id, amount, type, reference, user_id)
+         VALUES ($1, $2, 'expense', $3, $4)`,
+        [resolvedAccountId, amount, `Expense: ${description || category || 'misc'}`, req.user.user_id]
+      );
+      await pool.query(
+        'UPDATE accounts SET balance = balance - $1 WHERE account_id = $2',
+        [amount, resolvedAccountId]
+      );
     }
 
     res.status(201).json(expense);
